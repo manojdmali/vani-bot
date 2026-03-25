@@ -14,7 +14,7 @@ export class GeminiVoiceAgent {
     this.onStatus = onStatus;
   }
 
-  async connect(systemInstruction: string, voiceName: string = "Kore") {
+  async connect(systemInstruction: string, voiceName: string = "Kore", tools: any[] = []) {
     this.onStatus("Connecting...");
     this.audioContext = new AudioContext({ sampleRate: 16000 });
     this.nextStartTime = this.audioContext.currentTime;
@@ -60,6 +60,7 @@ export class GeminiVoiceAgent {
           voiceConfig: { prebuiltVoiceConfig: { voiceName } },
         },
         systemInstruction,
+        tools,
       },
     });
   }

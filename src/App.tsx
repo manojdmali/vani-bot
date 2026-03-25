@@ -3,7 +3,7 @@ import { auth, db, getKnowledgeBase, getGlobalSettings } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import { collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, doc, setDoc, deleteDoc, getDoc } from 'firebase/firestore';
 import { GeminiVoiceAgent } from './lib/gemini';
-import { Mic, MicOff, Book, Send, LogIn, LogOut, Settings, MessageSquare, Plus, Trash2, X, Shield, Save, Palette, Globe, Languages, Heart, History, Home, User as UserIcon, ChevronDown } from 'lucide-react';
+import { Mic, MicOff, Book, Send, LogIn, LogOut, Settings, MessageSquare, Plus, Trash2, X, Shield, Save, Palette, Globe, Languages, Heart, History, Home, User as UserIcon, ChevronDown, Upload, Database, FileText, Settings2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
 
@@ -147,7 +147,14 @@ VOICE-ONLY RULES:
 4. Use a respectful tone. In Hindi or Indian contexts, use "Ji" and "Aap" naturally.
 5. Keep responses concise and easy to follow by ear.
 6. Use natural conversational fillers like "Hmm", "I see", or "Alright" to sound more human.
-7. If the user asks for a list, present it as a natural spoken sequence, not a formatted list.`
+7. If the user asks for a list, present it as a natural spoken sequence, not a formatted list.`,
+  chunkSize: 1000,
+  overlap: 200,
+  vectorProvider: 'firestore', // 'firestore', 'chroma', 'qdrant', 'milvus'
+  vectorEndpoint: '',
+  vectorCollection: 'knowledge',
+  embeddingModel: 'gemini-embedding-2-preview',
+  searchGrounding: false,
 };
 
 export default function AppWrapper() {
@@ -170,6 +177,14 @@ function App() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [showAdmin, setShowAdmin] = useState(false);
   const [selectedLang, setSelectedLang] = useState(DEFAULT_LANGUAGES[0]);
+
+  // Handle Admin URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('admin') === 'true' || window.location.pathname === '/admin') {
+      setShowAdmin(true);
+    }
+  }, []);
   const [loading, setLoading] = useState(true);
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   const [voiceSettings, setVoiceSettings] = useState({
@@ -309,7 +324,12 @@ function App() {
       
       const fullInstruction = `${systemInstruction}\n\n${voicePersonality}`;
 
-      await agentRef.current.connect(fullInstruction, actualVoiceName);
+      const tools: any[] = [];
+      if (settings.searchGrounding) {
+        tools.push({ googleSearch: {} });
+      }
+
+      await agentRef.current.connect(fullInstruction, actualVoiceName, tools);
       setIsRecording(true);
       toast.success('Voice agent started');
     } catch (err) {
@@ -876,9 +896,20 @@ function VoiceSettingsModal({ onClose, settings, setSettings }: { onClose: () =>
 }
 
 function AdminPanel({ onClose, settings, knowledge }: { onClose: () => void, settings: any, knowledge: any[] }) {
-  const [activeTab, setActiveTab] = useState<'settings' | 'knowledge' | 'ai'>('settings');
+  const [activeTab, setActiveTab] = useState<'settings' | 'knowledge' | 'ai' | 'developer' | 'rag'>('settings');
   const [localSettings, setLocalSettings] = useState(settings);
   const [newDoc, setNewDoc] = useState({ title: '', content: '' });
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const appUrl = window.location.origin;
+  const widgetCode = `<iframe 
+  src="${appUrl}?widget=true" 
+  width="400" 
+  height="600" 
+  frameborder="0" 
+  style="border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.2);"
+></iframe>`;
 
   const saveSettings = async () => {
     try {
@@ -886,6 +917,45 @@ function AdminPanel({ onClose, settings, knowledge }: { onClose: () => void, set
       toast.success('Settings saved successfully');
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'settings/global');
+    }
+  };
+
+  const handleBulkUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setUploading(true);
+    const formData = new FormData();
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i]);
+    }
+    formData.append('config', JSON.stringify({
+      chunkSize: localSettings.chunkSize,
+      overlap: localSettings.overlap,
+      provider: localSettings.vectorProvider,
+      endpoint: localSettings.vectorEndpoint,
+      collection: localSettings.vectorCollection,
+      embeddingModel: localSettings.embeddingModel
+    }));
+
+    try {
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await response.json();
+      if (data.success) {
+        toast.success(data.message);
+        // If using firestore, we might want to refresh the local list
+        // but the server handles the vector DB push
+      } else {
+        toast.error(data.error || 'Upload failed');
+      }
+    } catch (err) {
+      toast.error('Upload failed: ' + (err as Error).message);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -958,11 +1028,25 @@ function AdminPanel({ onClose, settings, knowledge }: { onClose: () => void, set
               <span className="font-medium">Knowledge Base</span>
             </button>
             <button 
+              onClick={() => setActiveTab('rag')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all ${activeTab === 'rag' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/5'}`}
+            >
+              <Database className="w-5 h-5" />
+              <span className="font-medium">RAG Infrastructure</span>
+            </button>
+            <button 
               onClick={() => setActiveTab('ai')}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all ${activeTab === 'ai' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/5'}`}
             >
               <Shield className="w-5 h-5" />
               <span className="font-medium">AI Configuration</span>
+            </button>
+            <button 
+              onClick={() => setActiveTab('developer')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all ${activeTab === 'developer' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/5'}`}
+            >
+              <Globe className="w-5 h-5" />
+              <span className="font-medium">Developer / API</span>
             </button>
           </div>
 
@@ -1051,6 +1135,131 @@ function AdminPanel({ onClose, settings, knowledge }: { onClose: () => void, set
                   Save Global Configuration
                 </button>
               </div>
+            ) : activeTab === 'rag' ? (
+              <div className="space-y-10 max-w-2xl">
+                <section className="space-y-6">
+                  <h3 className="text-lg font-medium flex items-center gap-2 text-white/90">
+                    <Database className="w-5 h-5 text-[#ff4e00]" />
+                    Vector Storage Configuration
+                  </h3>
+                  <p className="text-sm text-white/40">Configure your preferred open-source vector store for advanced RAG capabilities.</p>
+                  
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-xs font-mono opacity-40 uppercase">Vector Provider</label>
+                      <select 
+                        value={localSettings.vectorProvider}
+                        onChange={e => setLocalSettings({...localSettings, vectorProvider: e.target.value})}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 focus:border-[#ff4e00]/50 outline-none text-white appearance-none"
+                      >
+                        <option value="firestore">Firestore (Simulated)</option>
+                        <option value="chroma">ChromaDB</option>
+                        <option value="qdrant">Qdrant</option>
+                        <option value="milvus">Milvus</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-mono opacity-40 uppercase">Endpoint URL</label>
+                      <input 
+                        type="text" 
+                        placeholder="http://localhost:8000"
+                        value={localSettings.vectorEndpoint}
+                        onChange={e => setLocalSettings({...localSettings, vectorEndpoint: e.target.value})}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 focus:border-[#ff4e00]/50 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-xs font-mono opacity-40 uppercase">Collection Name</label>
+                      <input 
+                        type="text" 
+                        value={localSettings.vectorCollection}
+                        onChange={e => setLocalSettings({...localSettings, vectorCollection: e.target.value})}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 focus:border-[#ff4e00]/50 outline-none"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-mono opacity-40 uppercase">Embedding Model</label>
+                      <input 
+                        type="text" 
+                        value={localSettings.embeddingModel}
+                        onChange={e => setLocalSettings({...localSettings, embeddingModel: e.target.value})}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 focus:border-[#ff4e00]/50 outline-none"
+                      />
+                    </div>
+                  </div>
+                </section>
+
+                <section className="space-y-6">
+                  <h3 className="text-lg font-medium flex items-center gap-2 text-white/90">
+                    <Settings2 className="w-5 h-5 text-[#ff4e00]" />
+                    Advanced Text Processing
+                  </h3>
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-xs font-mono opacity-40 uppercase">Chunk Size (chars)</label>
+                      <input 
+                        type="number" 
+                        value={localSettings.chunkSize}
+                        onChange={e => setLocalSettings({...localSettings, chunkSize: parseInt(e.target.value)})}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 focus:border-[#ff4e00]/50 outline-none"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-mono opacity-40 uppercase">Overlap (chars)</label>
+                      <input 
+                        type="number" 
+                        value={localSettings.overlap}
+                        onChange={e => setLocalSettings({...localSettings, overlap: parseInt(e.target.value)})}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 focus:border-[#ff4e00]/50 outline-none"
+                      />
+                    </div>
+                  </div>
+                </section>
+
+                <section className="space-y-6">
+                  <h3 className="text-lg font-medium flex items-center gap-2 text-white/90">
+                    <Upload className="w-5 h-5 text-[#ff4e00]" />
+                    Multi-Source Ingestion
+                  </h3>
+                  <div 
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`border-2 border-dashed border-white/10 rounded-3xl p-10 flex flex-col items-center justify-center gap-4 cursor-pointer hover:border-[#ff4e00]/50 transition-all ${uploading ? 'opacity-50 pointer-events-none' : ''}`}
+                  >
+                    <div className="p-4 bg-[#ff4e00]/10 rounded-full">
+                      <FileText className="w-8 h-8 text-[#ff4e00]" />
+                    </div>
+                    <div className="text-center">
+                      <p className="font-bold">Click to upload PDF documents</p>
+                      <p className="text-xs text-white/40 mt-1">Bulk upload multiple files for ingestion</p>
+                    </div>
+                    <input 
+                      type="file" 
+                      ref={fileInputRef}
+                      onChange={handleBulkUpload}
+                      multiple 
+                      accept=".pdf" 
+                      className="hidden" 
+                    />
+                    {uploading && (
+                      <div className="flex items-center gap-2 text-xs text-[#ff4e00] font-mono animate-pulse">
+                        <div className="w-2 h-2 bg-[#ff4e00] rounded-full" />
+                        PROCESSING DOCUMENTS...
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                <button 
+                  onClick={saveSettings}
+                  className="w-full py-4 bg-[#ff4e00] text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-[#ff4e00]/90 transition-all shadow-xl shadow-[#ff4e00]/20"
+                >
+                  <Save className="w-5 h-5" />
+                  Save RAG Configuration
+                </button>
+              </div>
             ) : activeTab === 'ai' ? (
               <div className="space-y-10 max-w-2xl">
                 <section className="space-y-6">
@@ -1112,6 +1321,22 @@ function AdminPanel({ onClose, settings, knowledge }: { onClose: () => void, set
                       <p className="text-[10px] text-white/30 italic">If left blank, the system will use the default server-side key.</p>
                     </div>
                   )}
+
+                  <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <div className="flex items-center gap-3">
+                      <Globe className="w-5 h-5 text-[#ff4e00]" />
+                      <div>
+                        <p className="font-medium">Google Search Grounding</p>
+                        <p className="text-xs text-white/40">Use real-time search for up-to-date answers</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => setLocalSettings({...localSettings, searchGrounding: !localSettings.searchGrounding})}
+                      className={`w-12 h-6 rounded-full transition-all relative ${localSettings.searchGrounding ? 'bg-[#ff4e00]' : 'bg-white/10'}`}
+                    >
+                      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${localSettings.searchGrounding ? 'left-7' : 'left-1'}`} />
+                    </button>
+                  </div>
                 </section>
 
                 <button 
@@ -1121,6 +1346,50 @@ function AdminPanel({ onClose, settings, knowledge }: { onClose: () => void, set
                   <Save className="w-5 h-5" />
                   Save AI Configuration
                 </button>
+              </div>
+            ) : activeTab === 'developer' ? (
+              <div className="space-y-10 max-w-2xl">
+                <section className="space-y-6">
+                  <h3 className="text-lg font-medium flex items-center gap-2 text-white/90">
+                    <Globe className="w-5 h-5 text-[#ff4e00]" />
+                    Plug & Play Widget
+                  </h3>
+                  <p className="text-sm text-white/40">Embed Vani as a widget on any website using this iframe code. You can customize the appearance via the UI Settings tab.</p>
+                  <div className="bg-black/40 p-6 rounded-2xl border border-white/10 font-mono text-xs text-white/70 relative group">
+                    <pre className="whitespace-pre-wrap break-all">{widgetCode}</pre>
+                    <button 
+                      onClick={() => {
+                        navigator.clipboard.writeText(widgetCode);
+                        toast.success('Widget code copied!');
+                      }}
+                      className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                    >
+                      <Save className="w-4 h-4" />
+                    </button>
+                  </div>
+                </section>
+
+                <section className="space-y-6">
+                  <h3 className="text-lg font-medium flex items-center gap-2 text-white/90">
+                    <Shield className="w-5 h-5 text-[#ff4e00]" />
+                    API Documentation
+                  </h3>
+                  <div className="space-y-4 text-sm text-white/60">
+                    <div className="p-4 bg-white/5 rounded-xl border border-white/5">
+                      <h4 className="font-bold text-white mb-1">Admin URL</h4>
+                      <p className="font-mono text-[10px] text-[#ff4e00]">{appUrl}?admin=true</p>
+                      <p className="mt-2">Use this URL to access the Admin Control Center from anywhere.</p>
+                    </div>
+                    <div className="p-4 bg-white/5 rounded-xl border border-white/5">
+                      <h4 className="font-bold text-white mb-1">RAG / Knowledge Base</h4>
+                      <p>The Knowledge Base tab allows you to upload documents that the AI uses for context. This is a "Plug & Play" RAG system powered by Firestore.</p>
+                    </div>
+                    <div className="p-4 bg-white/5 rounded-xl border border-white/5">
+                      <h4 className="font-bold text-white mb-1">Customization</h4>
+                      <p>All settings (Voice, Theme, AI Provider) are saved globally. Changes reflect instantly across all embedded widgets.</p>
+                    </div>
+                  </div>
+                </section>
               </div>
             ) : (
               <div className="space-y-8">
