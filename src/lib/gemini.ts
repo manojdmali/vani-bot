@@ -14,7 +14,7 @@ export class GeminiVoiceAgent {
     this.onStatus = onStatus;
   }
 
-  async connect(systemInstruction: string) {
+  async connect(systemInstruction: string, voiceName: string = "Kore") {
     this.onStatus("Connecting...");
     this.audioContext = new AudioContext({ sampleRate: 16000 });
     this.nextStartTime = this.audioContext.currentTime;
@@ -27,12 +27,19 @@ export class GeminiVoiceAgent {
           this.startMic();
         },
         onmessage: async (message: LiveServerMessage) => {
-          if (message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data) {
-            const base64Audio = message.serverContent.modelTurn.parts[0].inlineData.data;
-            this.playAudio(base64Audio);
-          }
-          if (message.serverContent?.modelTurn?.parts?.[0]?.text) {
-            this.onMessage(message.serverContent.modelTurn.parts[0].text);
+          if (message.serverContent?.modelTurn?.parts) {
+            for (const part of message.serverContent.modelTurn.parts) {
+              if (part.inlineData?.data) {
+                this.playAudio(part.inlineData.data);
+              }
+              if (part.text) {
+                // Filter out common "thinking" or "markdown" patterns if they still appear
+                const cleanText = part.text.replace(/\*\*.*?\*\*/g, '').replace(/#+ /g, '').trim();
+                if (cleanText) {
+                  this.onMessage(cleanText);
+                }
+              }
+            }
           }
           if (message.serverContent?.interrupted) {
             this.stopAudio();
@@ -49,7 +56,8 @@ export class GeminiVoiceAgent {
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } },
+          // 'Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'
+          voiceConfig: { prebuiltVoiceConfig: { voiceName } },
         },
         systemInstruction,
       },

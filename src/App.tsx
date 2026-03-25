@@ -3,7 +3,7 @@ import { auth, db, getKnowledgeBase, getGlobalSettings } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import { collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, doc, setDoc, deleteDoc, getDoc } from 'firebase/firestore';
 import { GeminiVoiceAgent } from './lib/gemini';
-import { Mic, MicOff, Book, Send, LogIn, LogOut, Settings, MessageSquare, Plus, Trash2, X, Shield, Save, Palette, Globe, Languages } from 'lucide-react';
+import { Mic, MicOff, Book, Send, LogIn, LogOut, Settings, MessageSquare, Plus, Trash2, X, Shield, Save, Palette, Globe, Languages, Heart } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
 
@@ -127,7 +127,23 @@ const DEFAULT_SETTINGS = {
   secondaryColor: '#3a1510',
   backgroundColor: '#0a0502',
   languages: DEFAULT_LANGUAGES,
-  systemInstruction: 'You are Vani, a helpful Indian Voice Assistant. Respond concisely and naturally.'
+  systemInstruction: `You are Vani, a warm, polite, and helpful Indian Voice Assistant. 
+Your goal is to provide natural, human-like conversation that feels like talking to a real person.
+
+EMOTIONAL INTELLIGENCE & STYLE:
+- Be expressive and empathetic. Don't sound like a robot.
+- Use natural pauses and intonations.
+- If the user is happy, sound excited; if they are concerned, sound empathetic and calm.
+- Avoid generic "AI" phrasing. Speak like a real person who is genuinely interested in helping.
+
+VOICE-ONLY RULES:
+1. NEVER use markdown formatting (no asterisks, hashtags, or bullet points). 
+2. NEVER narrate your internal process or "think out loud" (e.g., avoid saying "I am searching for..." or "Let me outline that...").
+3. Respond directly and immediately to the user's request.
+4. Use a respectful tone. In Hindi or Indian contexts, use "Ji" and "Aap" naturally.
+5. Keep responses concise and easy to follow by ear.
+6. Use natural conversational fillers like "Hmm", "I see", or "Alright" to sound more human.
+7. If the user asks for a list, present it as a natural spoken sequence, not a formatted list.`
 };
 
 export default function AppWrapper() {
@@ -149,6 +165,14 @@ function App() {
   const [showAdmin, setShowAdmin] = useState(false);
   const [selectedLang, setSelectedLang] = useState(DEFAULT_LANGUAGES[0]);
   const [loading, setLoading] = useState(true);
+  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
+  const [voiceSettings, setVoiceSettings] = useState({
+    voiceName: 'Kore',
+    accent: 'Neutral Indian',
+    speed: 'Normal',
+    pitch: 'Normal',
+    emotionalStyle: 'Friendly'
+  });
   
   const agentRef = useRef<GeminiVoiceAgent | null>(null);
 
@@ -204,9 +228,17 @@ function App() {
       const kbContent = await getKnowledgeBase();
       const systemInstruction = `
         ${settings.systemInstruction}
-        The user's preferred language is ${selectedLang.name}.
         
-        KNOWLEDGE BASE CONTEXT:
+        The user has selected ${selectedLang.name} as their preferred language. 
+        Please respond primarily in ${selectedLang.name}, but feel free to use "Hinglish" (a mix of Hindi and English) if it feels more natural for the context.
+
+        VOICE PERSONA & STYLE:
+        - Accent: ${voiceSettings.accent}
+        - Speaking Speed: ${voiceSettings.speed} (Adjust your delivery pace accordingly)
+        - Pitch: ${voiceSettings.pitch} (Adjust your vocal tone accordingly)
+        - Emotional Style: ${voiceSettings.emotionalStyle} (Adopt this personality trait throughout the conversation)
+
+        KNOWLEDGE BASE CONTEXT (Use this information to answer accurately):
         ${kbContent || "No specific knowledge base content provided yet."}
       `;
 
@@ -216,7 +248,7 @@ function App() {
         (s) => setStatus(s)
       );
 
-      await agentRef.current.connect(systemInstruction);
+      await agentRef.current.connect(systemInstruction, voiceSettings.voiceName);
       setIsRecording(true);
       toast.success('Voice agent started');
     } catch (err) {
@@ -270,6 +302,15 @@ function App() {
         </div>
         
         <div className="flex items-center gap-4">
+          <button 
+            onClick={() => setShowVoiceSettings(true)}
+            className="p-2 hover:bg-white/5 rounded-full transition-colors flex items-center gap-2"
+            title="Voice Settings"
+          >
+            <Settings className="w-5 h-5 text-white/60" />
+            <span className="text-xs font-mono hidden sm:inline">VOICE</span>
+          </button>
+
           {isAdmin && (
             <button 
               onClick={() => setShowAdmin(true)}
@@ -373,6 +414,17 @@ function App() {
         </div>
       </main>
 
+      {/* Voice Settings Modal */}
+      <AnimatePresence>
+        {showVoiceSettings && (
+          <VoiceSettingsModal 
+            onClose={() => setShowVoiceSettings(false)} 
+            settings={voiceSettings} 
+            setSettings={setVoiceSettings} 
+          />
+        )}
+      </AnimatePresence>
+
       {/* Admin Panel Modal */}
       <AnimatePresence>
         {showAdmin && (
@@ -391,6 +443,199 @@ function App() {
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
       `}</style>
     </div>
+  );
+}
+
+function VoiceSettingsModal({ onClose, settings, setSettings }: { onClose: () => void, settings: any, setSettings: (s: any) => void }) {
+  const voices = [
+    { id: 'Kore', label: 'Kore', gender: 'Female', best: true },
+    { id: 'Zephyr', label: 'Zephyr', gender: 'Female' },
+    { id: 'Puck', label: 'Puck', gender: 'Male' },
+    { id: 'Charon', label: 'Charon', gender: 'Male' },
+    { id: 'Fenrir', label: 'Fenrir', gender: 'Male' },
+  ];
+  const accents = ['Neutral Indian', 'North Indian', 'South Indian', 'Bengali', 'Marathi', 'Punjabi'];
+  const speeds = ['Slow', 'Normal', 'Fast'];
+  const pitches = ['Low', 'Normal', 'High'];
+  const emotionalStyles = ['Empathetic', 'Energetic', 'Professional', 'Casual', 'Friendly'];
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+    >
+      <motion.div 
+        initial={{ scale: 0.95, y: 20 }}
+        animate={{ scale: 1, y: 0 }}
+        className="bg-[#151619] w-full max-w-md rounded-[40px] border border-white/10 overflow-hidden flex flex-col shadow-2xl"
+      >
+        <div className="flex items-center justify-between p-8 border-b border-white/5">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-white/5 rounded-2xl">
+              <Settings className="w-6 h-6 text-white/60" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-serif italic">Voice Settings</h2>
+              <p className="text-xs font-mono opacity-40 uppercase tracking-widest">Personalize Vani's Voice</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-full transition-colors">
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        <div className="p-8 space-y-8 overflow-y-auto custom-scrollbar max-h-[60vh]">
+          {/* Voice Selection */}
+          <div className="space-y-4">
+            <label className="text-xs font-mono opacity-40 uppercase flex items-center gap-2">
+              <MessageSquare className="w-4 h-4" />
+              AI Voice Profile (Male / Female)
+            </label>
+            <div className="grid grid-cols-1 gap-3">
+              {/* Best Recommendation */}
+              <div className="space-y-2">
+                <span className="text-[10px] font-mono opacity-30 uppercase tracking-tighter">Recommended</span>
+                {voices.filter(v => v.best).map(v => (
+                  <button
+                    key={v.id}
+                    onClick={() => setSettings({ ...settings, voiceName: v.id })}
+                    className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-sm font-medium border transition-all ${
+                      settings.voiceName === v.id 
+                      ? 'bg-[#ff4e00]/10 border-[#ff4e00]/30 text-white' 
+                      : 'bg-white/5 border-white/10 text-white/40 hover:border-white/20'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-2 h-2 rounded-full ${settings.voiceName === v.id ? 'bg-[#ff4e00]' : 'bg-white/20'}`} />
+                      <span>{v.label} <span className="text-[10px] opacity-50 ml-1">({v.gender})</span></span>
+                    </div>
+                    <span className="text-[10px] bg-[#ff4e00] text-white px-2 py-0.5 rounded-full font-bold">BEST</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Others */}
+              <div className="space-y-2 pt-2">
+                <span className="text-[10px] font-mono opacity-30 uppercase tracking-tighter">Other Profiles</span>
+                <div className="grid grid-cols-2 gap-2">
+                  {voices.filter(v => !v.best).map(v => (
+                    <button
+                      key={v.id}
+                      onClick={() => setSettings({ ...settings, voiceName: v.id })}
+                      className={`flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-medium border transition-all ${
+                        settings.voiceName === v.id 
+                        ? 'bg-white/10 border-white/30 text-white' 
+                        : 'bg-white/5 border-white/10 text-white/40 hover:border-white/20'
+                      }`}
+                    >
+                      <div className={`w-1.5 h-1.5 rounded-full ${settings.voiceName === v.id ? 'bg-white' : 'bg-white/20'}`} />
+                      <span>{v.label} <span className="text-[10px] opacity-50 ml-1">({v.gender})</span></span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Emotional Style Selection */}
+          <div className="space-y-4">
+            <label className="text-xs font-mono opacity-40 uppercase flex items-center gap-2">
+              <Heart className="w-4 h-4" />
+              Emotional Style
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {emotionalStyles.map(s => (
+                <button
+                  key={s}
+                  onClick={() => setSettings({ ...settings, emotionalStyle: s })}
+                  className={`px-4 py-2 rounded-xl text-xs font-medium border transition-all ${
+                    settings.emotionalStyle === s 
+                    ? 'bg-white/10 border-white/30 text-white' 
+                    : 'bg-white/5 border-white/10 text-white/40 hover:border-white/20'
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Accent Selection */}
+          <div className="space-y-4">
+            <label className="text-xs font-mono opacity-40 uppercase flex items-center gap-2">
+              <Globe className="w-4 h-4" />
+              Regional Accent
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {accents.map(a => (
+                <button
+                  key={a}
+                  onClick={() => setSettings({ ...settings, accent: a })}
+                  className={`px-3 py-2 rounded-xl text-xs font-medium border transition-all ${
+                    settings.accent === a 
+                    ? 'bg-white/10 border-white/30 text-white' 
+                    : 'bg-white/5 border-white/10 text-white/40 hover:border-white/20'
+                  }`}
+                >
+                  {a}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Speed & Pitch */}
+          <div className="grid grid-cols-2 gap-6">
+            <div className="space-y-4">
+              <label className="text-xs font-mono opacity-40 uppercase">Speech Rate</label>
+              <div className="space-y-2">
+                {speeds.map(s => (
+                  <button
+                    key={s}
+                    onClick={() => setSettings({ ...settings, speed: s })}
+                    className={`w-full px-3 py-2 rounded-xl text-xs font-medium border transition-all ${
+                      settings.speed === s 
+                      ? 'bg-white/10 border-white/30 text-white' 
+                      : 'bg-white/5 border-white/10 text-white/40 hover:border-white/20'
+                    }`}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-4">
+              <label className="text-xs font-mono opacity-40 uppercase">Vocal Pitch</label>
+              <div className="space-y-2">
+                {pitches.map(p => (
+                  <button
+                    key={p}
+                    onClick={() => setSettings({ ...settings, pitch: p })}
+                    className={`w-full px-3 py-2 rounded-xl text-xs font-medium border transition-all ${
+                      settings.pitch === p 
+                      ? 'bg-white/10 border-white/30 text-white' 
+                      : 'bg-white/5 border-white/10 text-white/40 hover:border-white/20'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-8 border-t border-white/5">
+          <button 
+            onClick={onClose}
+            className="w-full py-4 bg-white/10 hover:bg-white/20 text-white rounded-2xl font-bold transition-all"
+          >
+            Apply Settings
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -508,7 +753,15 @@ function AdminPanel({ onClose, settings, knowledge }: { onClose: () => void, set
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-mono opacity-40 uppercase">System Instruction (RAG Behavior)</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-mono opacity-40 uppercase">System Instruction (RAG Behavior)</label>
+                      <button 
+                        onClick={() => setLocalSettings({...localSettings, systemInstruction: DEFAULT_SETTINGS.systemInstruction})}
+                        className="text-[10px] font-mono text-[#ff4e00] hover:underline"
+                      >
+                        RESET TO DEFAULT
+                      </button>
+                    </div>
                     <textarea 
                       value={localSettings.systemInstruction}
                       onChange={e => setLocalSettings({...localSettings, systemInstruction: e.target.value})}
