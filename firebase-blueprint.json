@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "knowledge": {
+      "title": "Knowledge Base",
+      "description": "Stores documents for RAG context.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "Title of the document." },
+        "content": { "type": "string", "description": "Full text content." },
+        "tags": { "type": "array", "items": { "type": "string" }, "description": "Keywords for search." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp." },
+        "authorId": { "type": "string", "description": "UID of the user who added it." }
+      },
+      "required": ["title", "content", "authorId"]
+    },
+    "users": {
+      "title": "User Profile",
+      "description": "Stores user preferences and roles.",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "user"] },
+        "preferredLanguage": { "type": "string", "description": "Preferred Indian language." }
+      },
+      "required": ["email", "role"]
+    },
+    "settings": {
+      "title": "App Settings",
+      "description": "Global configuration for the app UI and behavior.",
+      "type": "object",
+      "properties": {
+        "appName": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "primaryColor": { "type": "string" },
+        "secondaryColor": { "type": "string" },
+        "backgroundColor": { "type": "string" },
+        "languages": { 
+          "type": "array", 
+          "items": { 
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "code": { "type": "string" }
+            }
+          } 
+        },
+        "systemInstruction": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/knowledge/{docId}": {
+      "schema": "knowledge",
+      "description": "Global knowledge base documents."
+    },
+    "/users/{userId}": {
+      "schema": "users",
+      "description": "User profile data."
+    },
+    "/settings/global": {
+      "schema": "settings",
+      "description": "Global application settings."
+    }
+  }
+}

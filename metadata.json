@@ -1,0 +1,5 @@
+{
+  "name": "Vani: Indian Voice Agent",
+  "description": "A multilingual voice assistant supporting Indian languages with RAG capabilities.",
+  "requestFramePermissions": ["microphone"]
+}
