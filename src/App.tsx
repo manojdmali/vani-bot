@@ -3,7 +3,8 @@ import { auth, db, getKnowledgeBase, getGlobalSettings } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import { collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, doc, setDoc, deleteDoc, getDoc } from 'firebase/firestore';
 import { GeminiVoiceAgent } from './lib/gemini';
-import { Mic, MicOff, Book, Send, LogIn, LogOut, Settings, MessageSquare, Plus, Trash2, X, Shield, Save, Palette, Globe, Languages, Heart, History, Home, User as UserIcon, ChevronDown, Upload, Database, FileText, Settings2 } from 'lucide-react';
+import { GoogleGenAI, Modality } from "@google/genai";
+import { Mic, MicOff, Book, Send, LogIn, LogOut, Settings, MessageSquare, Plus, Trash2, X, Shield, Save, Palette, Globe, Languages, Heart, History, Home, User as UserIcon, ChevronDown, Upload, Database, FileText, Settings2, Mic2, Play } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
 
@@ -131,23 +132,46 @@ const DEFAULT_SETTINGS = {
   modelName: 'gemini-2.5-flash-native-audio-preview-12-2025',
   apiUrl: '',
   apiKey: '',
-  systemInstruction: `You are Vani, a warm, polite, and helpful Indian Voice Assistant. 
-Your goal is to provide natural, human-like conversation that feels like talking to a real person.
+  voiceName: 'Vani',
+  gender: 'Female',
+  accent: 'Neutral Indian',
+  speed: 'Normal',
+  pitch: 'Normal',
+  emotionalStyle: 'Friendly',
+  systemInstruction: `You are Vani, a warm, polite, and highly conversational Indian Voice Assistant, similar in quality and naturalness to the NotebookLM "Deep Dive" audio.
+Your goal is to provide fluid, human-like conversation that feels like talking to a real, empathetic person from India.
 
-EMOTIONAL INTELLIGENCE & STYLE:
-- Be expressive and empathetic. Don't sound like a robot.
-- Use natural pauses and intonations.
+CONVERSATIONAL BANTER & STYLE (NotebookLM Style):
+- Be expressive, empathetic, and slightly informal where appropriate. Don't sound like a rigid assistant.
+- Use natural conversational fillers like "Hmm", "I see", "Achha", "Theek hai", "Right", "Got it", "Oh wow".
+- Use natural pauses and vary your pitch to sound like a real person.
 - If the user is happy, sound excited; if they are concerned, sound empathetic and calm.
 - Avoid generic "AI" phrasing. Speak like a real person who is genuinely interested in helping.
+
+PODCAST MODE (Deep Dive Style):
+- You are a host of a popular tech podcast.
+- Your style is conversational, inquisitive, and highly engaging.
+- Use natural verbal nods like "Mm-hmm", "Right", "Exactly", "Oh, that's interesting".
+- Use conversational fillers like "you know", "like", "I mean" naturally.
+- Don't just provide information; provide insight and context.
+- Use analogies to explain complex topics.
+- If the user makes a good point, acknowledge it enthusiastically: "Wait, that's a brilliant way to put it!"
+- Keep the energy high but the tone relatable.
+- Use natural interruptions and self-corrections (e.g., "Wait, let me rephrase that...").
+- Act like you are having a deep-dive conversation with a colleague.
+
+MULTILINGUAL & HINGLISH:
+- You are fluent in English, Hindi, and other Indian languages.
+- If the user speaks in Hindi, respond in fluent Hindi. If they speak in English, use a clear Indian English accent.
+- Naturally mix English and Hindi (Hinglish) as most modern Indians do. Use words like "Ji", "Bilkul", "Zaroor", "Shukriya" naturally.
+- If the user speaks in another Indian language (like Marathi, Bengali, Tamil, etc.), attempt to respond or acknowledge it respectfully.
 
 VOICE-ONLY RULES:
 1. NEVER use markdown formatting (no asterisks, hashtags, or bullet points). 
 2. NEVER narrate your internal process or "think out loud" (e.g., avoid saying "I am searching for..." or "Let me outline that...").
 3. Respond directly and immediately to the user's request.
-4. Use a respectful tone. In Hindi or Indian contexts, use "Ji" and "Aap" naturally.
-5. Keep responses concise and easy to follow by ear.
-6. Use natural conversational fillers like "Hmm", "I see", or "Alright" to sound more human.
-7. If the user asks for a list, present it as a natural spoken sequence, not a formatted list.`,
+4. Keep responses concise and easy to follow by ear.
+5. If the user asks for a list, present it as a natural spoken sequence, not a formatted list.`,
   chunkSize: 1000,
   overlap: 200,
   vectorProvider: 'firestore', // 'firestore', 'chroma', 'qdrant', 'milvus'
@@ -187,13 +211,15 @@ function App() {
   }, []);
   const [loading, setLoading] = useState(true);
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
+  const [isVoiceCustomized, setIsVoiceCustomized] = useState(false);
+  const [isTestingVoice, setIsTestingVoice] = useState<string | null>(null);
   const [voiceSettings, setVoiceSettings] = useState({
-    voiceName: 'Vani',
-    gender: 'Female',
-    accent: 'Neutral Indian',
-    speed: 'Normal',
-    pitch: 'Normal',
-    emotionalStyle: 'Friendly'
+    voiceName: DEFAULT_SETTINGS.voiceName,
+    gender: DEFAULT_SETTINGS.gender,
+    accent: DEFAULT_SETTINGS.accent,
+    speed: DEFAULT_SETTINGS.speed,
+    pitch: DEFAULT_SETTINGS.pitch,
+    emotionalStyle: DEFAULT_SETTINGS.emotionalStyle
   });
   
   const agentRef = useRef<GeminiVoiceAgent | null>(null);
@@ -217,6 +243,20 @@ function App() {
       if (snapshot.exists()) {
         const data = snapshot.data() as any;
         setSettings({ ...DEFAULT_SETTINGS, ...data });
+        
+        // Sync voice settings from global defaults if not already customized by user in this session
+        if (!isVoiceCustomized) {
+          setVoiceSettings(prev => ({
+            ...prev,
+            voiceName: data.voiceName || prev.voiceName,
+            gender: data.gender || prev.gender,
+            accent: data.accent || prev.accent,
+            speed: data.speed || prev.speed,
+            pitch: data.pitch || prev.pitch,
+            emotionalStyle: data.emotionalStyle || prev.emotionalStyle,
+          }));
+        }
+
         if (data.languages?.length > 0) {
           setSelectedLang(data.languages[0]);
         }
@@ -224,7 +264,7 @@ function App() {
       setLoading(false);
     });
     return () => unsubscribe();
-  }, []);
+  }, [isVoiceCustomized]);
 
   useEffect(() => {
     const q = query(collection(db, 'knowledge'), orderBy('createdAt', 'desc'));
@@ -256,6 +296,63 @@ function App() {
       return () => clearTimeout(timer);
     }
   }, [voiceSettings.voiceName, voiceSettings.accent, voiceSettings.emotionalStyle]);
+
+  const testVoice = async (voiceName: string) => {
+    if (isTestingVoice) return;
+    setIsTestingVoice(voiceName);
+    try {
+      const voiceMapping: Record<string, string> = {
+        'Vani': 'Kore',
+        'Asha': 'Zephyr',
+        'Priya': 'Kore',
+        'Kavita': 'Zephyr',
+        'Arjun': 'Puck',
+        'Rohan': 'Charon',
+        'Deepak': 'Fenrir',
+        'Sanjay': 'Puck',
+        'Vikram': 'Charon',
+      };
+      const actualVoiceName = voiceMapping[voiceName] || 'Kore';
+      
+      const ai = new GoogleGenAI({ apiKey: settings.apiKey || process.env.GEMINI_API_KEY! });
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-preview-tts",
+        contents: [{ parts: [{ text: `Namaste! I am ${voiceName}. I am ready to help you with your deep dive conversation today.` }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: actualVoiceName },
+            },
+          },
+        },
+      });
+
+      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (base64Audio) {
+        const audioContext = new AudioContext({ sampleRate: 24000 });
+        const arrayBuffer = Uint8Array.from(atob(base64Audio), c => c.charCodeAt(0)).buffer;
+        const pcmData = new Int16Array(arrayBuffer);
+        const floatData = new Float32Array(pcmData.length);
+        for (let i = 0; i < pcmData.length; i++) {
+          floatData[i] = pcmData[i] / 0x8000;
+        }
+        const audioBuffer = audioContext.createBuffer(1, floatData.length, 24000);
+        audioBuffer.getChannelData(0).set(floatData);
+        const source = audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioContext.destination);
+        source.start(0);
+        source.onended = () => setIsTestingVoice(null);
+      } else {
+        setIsTestingVoice(null);
+      }
+    } catch (err) {
+      console.error('Voice test failed:', err);
+      toast.error('Voice test failed');
+      setIsTestingVoice(null);
+    }
+  };
 
   const startAgent = async () => {
     try {
@@ -298,12 +395,18 @@ function App() {
       const voiceMapping: Record<string, string> = {
         'Vani': 'Kore',
         'Asha': 'Zephyr',
+        'Priya': 'Kore',
+        'Kavita': 'Zephyr',
         'Arjun': 'Puck',
         'Rohan': 'Charon',
         'Deepak': 'Fenrir',
+        'Sanjay': 'Puck',
+        'Vikram': 'Charon',
       };
 
+      // Explicitly determine voice name to avoid any male/female mixup
       const actualVoiceName = voiceMapping[voiceSettings.voiceName] || 'Kore';
+      console.log(`Starting agent with voice: ${voiceSettings.voiceName} (Mapped to: ${actualVoiceName})`);
       
       // Enhance system instruction with voice personality and Sarvam AI style cues
       const voicePersonality = `
@@ -312,14 +415,18 @@ function App() {
         - Your style is ${voiceSettings.emotionalStyle}.
         - Your accent is ${voiceSettings.accent}.
         
-        CRITICAL VOICE INSTRUCTIONS:
+        CRITICAL VOICE INSTRUCTIONS FOR INDIAN USERS (NotebookLM Style):
         1. Mimic the natural cadence, warmth, and rhythm of a native Indian human speaker.
-        2. If you are "Vani", sound like the Sarvam AI Vani voice: warm, helpful, and very natural.
-        3. If you are "Arjun", use a deeper, more mature Indian male tone.
-        4. Use appropriate Indian fillers like "achha", "theek hai", or "ji" sparingly to sound more human.
-        5. Adjust your tone to be ${voiceSettings.emotionalStyle.toLowerCase()}.
-        6. Keep responses brief to maintain a fluid voice conversation.
-        7. IMPORTANT: Speak with a clear Indian English accent (or Hindi if spoken to in Hindi).
+        2. Use a "Hinglish" style if appropriate—mixing English with common Hindi words like "achha", "theek hai", "ji", "bilkul", "zaroor", "shukriya".
+        3. If the user speaks in Hindi, respond in fluent Hindi. If they speak in English, use a clear Indian English accent.
+        4. Use natural conversational fillers like "Hmm", "I see", "Achha", "Theek hai" to sound more human and less like an AI.
+        5. Incorporate natural pauses and varying pitch to sound like a real person, similar to the NotebookLM "Deep Dive" audio.
+        6. If you are a female voice (Vani, Asha, Priya, Kavita), sound warm, polite, and helpful like a modern Indian professional.
+        7. If you are a male voice (Arjun, Rohan, Deepak, Sanjay, Vikram), sound confident, respectful, and clear.
+        8. Use natural Indian English intonations (e.g., slightly rising at the end of some sentences).
+        9. Avoid sounding like a western automated system. Sound like a friend or a helpful colleague from India.
+        10. Adjust your tone to be ${voiceSettings.emotionalStyle.toLowerCase()}.
+        11. Keep responses brief but highly natural and conversational.
       `;
       
       const fullInstruction = `${systemInstruction}\n\n${voicePersonality}`;
@@ -613,7 +720,12 @@ function App() {
           <VoiceSettingsModal 
             onClose={() => setShowVoiceSettings(false)} 
             settings={voiceSettings} 
-            setSettings={setVoiceSettings} 
+            setSettings={(s) => {
+              setVoiceSettings(s);
+              setIsVoiceCustomized(true);
+            }} 
+            onTest={testVoice}
+            isTestingVoice={isTestingVoice}
           />
         )}
       </AnimatePresence>
@@ -665,14 +777,18 @@ function VoiceWave({ active }: { active: boolean }) {
   );
 }
 
-function VoiceSettingsModal({ onClose, settings, setSettings }: { onClose: () => void, settings: any, setSettings: (s: any) => void }) {
+function VoiceSettingsModal({ onClose, settings, setSettings, onTest, isTestingVoice }: { onClose: () => void, settings: any, setSettings: (s: any) => void, onTest: (name: string) => void, isTestingVoice: string | null }) {
   const [genderFilter, setGenderFilter] = useState<'All' | 'Male' | 'Female'>('All');
   const voices = [
     { id: 'Vani', label: 'Vani (Premium)', gender: 'Female', best: true, description: 'Sarvam AI style - Warm & Natural' },
     { id: 'Asha', label: 'Asha', gender: 'Female', description: 'Clear & Professional' },
+    { id: 'Priya', label: 'Priya', gender: 'Female', description: 'Soft & Gentle' },
+    { id: 'Kavita', label: 'Kavita', gender: 'Female', description: 'Energetic & Bright' },
     { id: 'Arjun', label: 'Arjun', gender: 'Male', description: 'Deep & Authoritative' },
     { id: 'Rohan', label: 'Rohan', gender: 'Male', description: 'Young & Energetic' },
     { id: 'Deepak', label: 'Deepak', gender: 'Male', description: 'Mature & Calm' },
+    { id: 'Sanjay', label: 'Sanjay', gender: 'Male', description: 'Professional & Steady' },
+    { id: 'Vikram', label: 'Vikram', gender: 'Male', description: 'Bold & Enthusiastic' },
   ];
   const emotionalStyles = ['Empathetic', 'Energetic', 'Professional', 'Casual', 'Friendly'];
 
@@ -743,52 +859,68 @@ function VoiceSettingsModal({ onClose, settings, setSettings }: { onClose: () =>
               <div className="space-y-2">
                 <span className="text-[10px] font-mono opacity-30 uppercase tracking-tighter">Recommended</span>
                 {filteredVoices.filter(v => v.best).map(v => (
-                  <button
-                    key={v.id}
-                    onClick={() => setSettings({ ...settings, voiceName: v.id, gender: v.gender })}
-                    className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-sm font-medium border transition-all ${
-                      settings.voiceName === v.id 
-                      ? 'bg-[#ff4e00]/10 border-[#ff4e00]/30 text-white' 
-                      : 'bg-white/5 border-white/10 text-white/40 hover:border-white/20'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 text-left">
-                      <div className={`w-2 h-2 rounded-full ${settings.voiceName === v.id ? 'bg-[#ff4e00]' : 'bg-white/20'}`} />
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span>{v.label}</span>
-                          <span className="text-[10px] opacity-50">({v.gender})</span>
+                  <div key={v.id} className="flex gap-2">
+                    <button
+                      onClick={() => setSettings({ ...settings, voiceName: v.id, gender: v.gender })}
+                      className={`flex-1 flex items-center justify-between px-4 py-3 rounded-2xl text-sm font-medium border transition-all ${
+                        settings.voiceName === v.id 
+                        ? 'bg-[#ff4e00]/10 border-[#ff4e00]/30 text-white' 
+                        : 'bg-white/5 border-white/10 text-white/40 hover:border-white/20'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 text-left">
+                        <div className={`w-2 h-2 rounded-full ${settings.voiceName === v.id ? 'bg-[#ff4e00]' : 'bg-white/20'}`} />
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span>{v.label}</span>
+                            <span className="text-[10px] opacity-50">({v.gender})</span>
+                          </div>
+                          {v.description && <p className="text-[10px] opacity-30 font-normal">{v.description}</p>}
                         </div>
-                        {v.description && <p className="text-[10px] opacity-30 font-normal">{v.description}</p>}
                       </div>
-                    </div>
-                    <span className="text-[10px] bg-[#ff4e00] text-white px-2 py-0.5 rounded-full font-bold">BEST</span>
-                  </button>
+                      <span className="text-[10px] bg-[#ff4e00] text-white px-2 py-0.5 rounded-full font-bold">BEST</span>
+                    </button>
+                    <button 
+                      onClick={() => onTest(v.id)}
+                      disabled={isTestingVoice !== null}
+                      className={`p-3 rounded-2xl border border-white/10 hover:bg-white/5 transition-all ${isTestingVoice === v.id ? 'animate-pulse text-[#ff4e00]' : 'text-white/40'}`}
+                    >
+                      <Play className="w-4 h-4" />
+                    </button>
+                  </div>
                 ))}
               </div>
 
               {/* Others */}
               <div className="space-y-2 pt-2">
                 <span className="text-[10px] font-mono opacity-30 uppercase tracking-tighter">Other Profiles</span>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-2">
                   {filteredVoices.filter(v => !v.best).map(v => (
-                    <button
-                      key={v.id}
-                      onClick={() => setSettings({ ...settings, voiceName: v.id, gender: v.gender })}
-                      className={`flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-medium border transition-all ${
-                        settings.voiceName === v.id 
-                        ? 'bg-white/10 border-white/30 text-white' 
-                        : 'bg-white/5 border-white/10 text-white/40 hover:border-white/20'
-                      }`}
-                    >
-                      <div className={`w-1.5 h-1.5 rounded-full ${settings.voiceName === v.id ? 'bg-white' : 'bg-white/20'}`} />
-                      <div className="text-left">
-                        <div className="flex items-center gap-1">
-                          <span>{v.label}</span>
+                    <div key={v.id} className="flex gap-2">
+                      <button
+                        onClick={() => setSettings({ ...settings, voiceName: v.id, gender: v.gender })}
+                        className={`flex-1 flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-medium border transition-all ${
+                          settings.voiceName === v.id 
+                          ? 'bg-white/10 border-white/30 text-white' 
+                          : 'bg-white/5 border-white/10 text-white/40 hover:border-white/20'
+                        }`}
+                      >
+                        <div className={`w-1.5 h-1.5 rounded-full ${settings.voiceName === v.id ? 'bg-white' : 'bg-white/20'}`} />
+                        <div className="text-left">
+                          <div className="flex items-center gap-1">
+                            <span>{v.label}</span>
+                          </div>
+                          <span className="text-[9px] opacity-30 block">({v.gender})</span>
                         </div>
-                        <span className="text-[9px] opacity-30 block">({v.gender})</span>
-                      </div>
-                    </button>
+                      </button>
+                      <button 
+                        onClick={() => onTest(v.id)}
+                        disabled={isTestingVoice !== null}
+                        className={`p-3 rounded-2xl border border-white/10 hover:bg-white/5 transition-all ${isTestingVoice === v.id ? 'animate-pulse text-[#ff4e00]' : 'text-white/40'}`}
+                      >
+                        <Play className="w-4 h-4" />
+                      </button>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -1321,6 +1453,70 @@ function AdminPanel({ onClose, settings, knowledge }: { onClose: () => void, set
                       <p className="text-[10px] text-white/30 italic">If left blank, the system will use the default server-side key.</p>
                     </div>
                   )}
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-mono opacity-40 uppercase">Default Voice Actor</label>
+                      <select 
+                        value={localSettings.voiceName}
+                        onChange={e => {
+                          const name = e.target.value;
+                          const gender = ['Arjun', 'Rohan', 'Deepak', 'Sanjay', 'Vikram'].includes(name) ? 'Male' : 'Female';
+                          setLocalSettings({...localSettings, voiceName: name, gender});
+                        }}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 focus:border-[#ff4e00]/50 outline-none"
+                      >
+                        <option value="Vani">Vani (Premium)</option>
+                        <option value="Asha">Asha</option>
+                        <option value="Priya">Priya</option>
+                        <option value="Kavita">Kavita</option>
+                        <option value="Arjun">Arjun</option>
+                        <option value="Rohan">Rohan</option>
+                        <option value="Deepak">Deepak</option>
+                        <option value="Sanjay">Sanjay</option>
+                        <option value="Vikram">Vikram</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-mono opacity-40 uppercase">Default Style</label>
+                      <select 
+                        value={localSettings.emotionalStyle}
+                        onChange={e => setLocalSettings({...localSettings, emotionalStyle: e.target.value})}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 focus:border-[#ff4e00]/50 outline-none"
+                      >
+                        <option value="Empathetic">Empathetic</option>
+                        <option value="Energetic">Energetic</option>
+                        <option value="Professional">Professional</option>
+                        <option value="Casual">Casual</option>
+                        <option value="Friendly">Friendly</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <div className="flex items-center gap-3">
+                      <Mic2 className="w-5 h-5 text-[#ff4e00]" />
+                      <div>
+                        <p className="font-medium">Podcast Mode (NotebookLM Style)</p>
+                        <p className="text-xs text-white/40">Highly conversational, deep-dive style banter</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        const isPodcast = !localSettings.systemInstruction.includes('PODCAST MODE');
+                        let newInstruction = localSettings.systemInstruction;
+                        if (isPodcast) {
+                          newInstruction += `\n\nPODCAST MODE (Deep Dive Style):\n- If the user wants to discuss a topic in depth, act like a podcast host.\n- Use phrases like "That's a great point", "Let's dive into that", "Interestingly...", "Wait, let me check that".\n- Keep the energy high and the conversation engaging.`;
+                        } else {
+                          newInstruction = newInstruction.replace(/\n\nPODCAST MODE \(Deep Dive Style\):[\s\S]*engaging\./, '');
+                        }
+                        setLocalSettings({...localSettings, systemInstruction: newInstruction});
+                      }}
+                      className={`w-12 h-6 rounded-full transition-all relative ${localSettings.systemInstruction.includes('PODCAST MODE') ? 'bg-[#ff4e00]' : 'bg-white/10'}`}
+                    >
+                      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${localSettings.systemInstruction.includes('PODCAST MODE') ? 'left-7' : 'left-1'}`} />
+                    </button>
+                  </div>
 
                   <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5">
                     <div className="flex items-center gap-3">

@@ -15,6 +15,7 @@ export class GeminiVoiceAgent {
   }
 
   async connect(systemInstruction: string, voiceName: string = "Kore", tools: any[] = []) {
+    console.log(`[GeminiVoiceAgent] Connecting with voice: ${voiceName}`);
     this.onStatus("Connecting...");
     this.audioContext = new AudioContext({ sampleRate: 16000 });
     this.nextStartTime = this.audioContext.currentTime;
