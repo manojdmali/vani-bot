@@ -3,7 +3,7 @@ import { auth, db, getKnowledgeBase, getGlobalSettings } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import { collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, doc, setDoc, deleteDoc, getDoc } from 'firebase/firestore';
 import { GeminiVoiceAgent } from './lib/gemini';
-import { Mic, MicOff, Book, Send, LogIn, LogOut, Settings, MessageSquare, Plus, Trash2, X, Shield, Save, Palette, Globe, Languages, Heart } from 'lucide-react';
+import { Mic, MicOff, Book, Send, LogIn, LogOut, Settings, MessageSquare, Plus, Trash2, X, Shield, Save, Palette, Globe, Languages, Heart, History, Home, User as UserIcon, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
 
@@ -127,6 +127,10 @@ const DEFAULT_SETTINGS = {
   secondaryColor: '#3a1510',
   backgroundColor: '#0a0502',
   languages: DEFAULT_LANGUAGES,
+  aiProvider: 'gemini', // 'gemini', 'ollama', 'grok', 'openai'
+  modelName: 'gemini-2.5-flash-native-audio-preview-12-2025',
+  apiUrl: '',
+  apiKey: '',
   systemInstruction: `You are Vani, a warm, polite, and helpful Indian Voice Assistant. 
 Your goal is to provide natural, human-like conversation that feels like talking to a real person.
 
@@ -160,6 +164,8 @@ function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [status, setStatus] = useState('Idle');
   const [lastMessage, setLastMessage] = useState('');
+  const [history, setHistory] = useState<{ role: 'user' | 'assistant', text: string, timestamp: number }[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const [knowledge, setKnowledge] = useState<any[]>([]);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -167,7 +173,8 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   const [voiceSettings, setVoiceSettings] = useState({
-    voiceName: 'Kore',
+    voiceName: 'Vani',
+    gender: 'Female',
     accent: 'Neutral Indian',
     speed: 'Normal',
     pitch: 'Normal',
@@ -242,13 +249,43 @@ function App() {
         ${kbContent || "No specific knowledge base content provided yet."}
       `;
 
+      // Use configured API key or fallback to environment key
+      const apiKey = settings.apiKey || process.env.GEMINI_API_KEY!;
+
+      if (settings.aiProvider !== 'gemini') {
+        toast.info(`Switching to ${settings.aiProvider} (${settings.modelName})...`);
+        // Note: For non-gemini providers, we would ideally implement a separate pipeline.
+        // For now, we'll keep using Gemini but warn the user if they've selected another provider
+        // until the full multi-provider bridge is implemented.
+      }
+
       agentRef.current = new GeminiVoiceAgent(
-        process.env.GEMINI_API_KEY!,
-        (msg) => setLastMessage(msg),
+        apiKey,
+        (msg) => {
+          setLastMessage(msg);
+          setHistory(prev => [...prev, { role: 'assistant', text: msg, timestamp: Date.now() }]);
+        },
         (s) => setStatus(s)
       );
 
-      await agentRef.current.connect(systemInstruction, voiceSettings.voiceName);
+      const voiceMapping: Record<string, string> = {
+        'Vani': 'Kore',
+        'Asha': 'Zephyr',
+        'Ananya': 'Kore',
+        'Arjun': 'Puck',
+        'Rohan': 'Charon',
+      };
+
+      const actualVoiceName = voiceMapping[voiceSettings.voiceName] || voiceSettings.voiceName;
+      
+      // Enhance system instruction with voice personality
+      const voicePersonality = `You are Vani, an Indian AI assistant. Your voice profile is ${voiceSettings.voiceName} (${voiceSettings.gender}). 
+      Speak with a ${voiceSettings.accent} accent. Your emotional style is ${voiceSettings.emotionalStyle}. 
+      Keep your responses concise and natural for a voice conversation.`;
+      
+      const fullInstruction = `${systemInstruction}\n\n${voicePersonality}`;
+
+      await agentRef.current.connect(fullInstruction, actualVoiceName);
       setIsRecording(true);
       toast.success('Voice agent started');
     } catch (err) {
@@ -286,49 +323,65 @@ function App() {
       </div>
 
       {/* Header */}
-      <header className="relative z-10 flex items-center justify-between p-6 backdrop-blur-md border-b border-white/5">
+      <header className="relative z-20 flex items-center justify-between p-4 sm:p-6 backdrop-blur-xl border-b border-white/5 sticky top-0">
         <div className="flex items-center gap-3">
-          {settings.logoUrl ? (
-            <img src={settings.logoUrl} alt="Logo" className="w-10 h-10 object-contain" referrerPolicy="no-referrer" />
-          ) : (
-            <div 
-              className="w-10 h-10 rounded-full flex items-center justify-center shadow-lg"
-              style={{ background: `linear-gradient(to tr, ${settings.primaryColor}, ${settings.secondaryColor})`, boxShadow: `0 0 20px ${settings.primaryColor}40` }}
-            >
-              <MessageSquare className="w-5 h-5 text-white" />
-            </div>
-          )}
-          <h1 className="text-2xl font-serif italic tracking-tight">{settings.appName}</h1>
+          <div 
+            className="w-8 h-8 rounded-full flex items-center justify-center shadow-lg"
+            style={{ background: `linear-gradient(to tr, ${settings.primaryColor}, ${settings.secondaryColor})` }}
+          >
+            <MessageSquare className="w-4 h-4 text-white" />
+          </div>
+          <h1 className="text-xl font-serif italic tracking-tight hidden sm:block">{settings.appName}</h1>
         </div>
         
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 sm:gap-4">
+          {/* Language Dropdown */}
+          <div className="relative group">
+            <button className="flex items-center gap-2 px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-full border border-white/10 transition-all">
+              <Globe className="w-4 h-4 text-[#ff4e00]" />
+              <span className="text-xs font-medium">{selectedLang.name.split(' ')[0]}</span>
+              <ChevronDown className="w-3 h-3 opacity-40" />
+            </button>
+            <div className="absolute top-full right-0 mt-2 w-48 bg-[#151619] border border-white/10 rounded-2xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 overflow-hidden">
+              {settings.languages.map(lang => (
+                <button
+                  key={lang.code}
+                  onClick={() => setSelectedLang(lang)}
+                  className={`w-full text-left px-4 py-3 text-xs hover:bg-white/5 transition-colors ${selectedLang.code === lang.code ? 'text-[#ff4e00] bg-white/5' : 'text-white/60'}`}
+                >
+                  {lang.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Small Mic Status */}
+          <div className={`p-2 rounded-full border transition-all ${isRecording ? 'bg-green-500/10 border-green-500/30' : 'bg-white/5 border-white/10'}`}>
+            <Mic className={`w-4 h-4 ${isRecording ? 'text-green-500' : 'text-white/20'}`} />
+          </div>
+
+          <div className="h-4 w-[1px] bg-white/10 mx-1" />
+
           <button 
             onClick={() => setShowVoiceSettings(true)}
-            className="p-2 hover:bg-white/5 rounded-full transition-colors flex items-center gap-2"
-            title="Voice Settings"
+            className="p-2 hover:bg-white/5 rounded-full transition-colors"
           >
             <Settings className="w-5 h-5 text-white/60" />
-            <span className="text-xs font-mono hidden sm:inline">VOICE</span>
           </button>
 
           {isAdmin && (
             <button 
               onClick={() => setShowAdmin(true)}
-              className="p-2 hover:bg-white/5 rounded-full transition-colors flex items-center gap-2"
-              title="Admin Panel"
+              className="p-2 hover:bg-white/5 rounded-full transition-colors"
             >
               <Shield className="w-5 h-5 text-yellow-500" />
-              <span className="text-xs font-mono hidden sm:inline">ADMIN</span>
             </button>
           )}
 
           {user ? (
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-full border border-white/10">
-              <img src={user.photoURL || ''} alt="" className="w-6 h-6 rounded-full" referrerPolicy="no-referrer" />
-              <button onClick={handleLogout} className="p-1 hover:text-red-400 transition-colors">
-                <LogOut className="w-4 h-4" />
-              </button>
-            </div>
+            <button onClick={handleLogout} className="w-8 h-8 rounded-full overflow-hidden border border-white/10">
+              <img src={user.photoURL || ''} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+            </button>
           ) : (
             <button onClick={handleLogin} className="p-2 hover:bg-white/5 rounded-full transition-colors">
               <LogIn className="w-5 h-5" />
@@ -337,30 +390,17 @@ function App() {
         </div>
       </header>
 
-      <main className="relative z-10 max-w-4xl mx-auto p-8 pt-12">
-        <div className="flex flex-col items-center text-center space-y-12">
+      <main className="relative z-10 max-w-4xl mx-auto p-6 sm:p-8 pt-8 sm:pt-12 pb-32">
+        <div className="flex flex-col items-center text-center space-y-8 sm:space-y-12">
           
-          <div className="space-y-4">
-            <h2 className="text-5xl font-serif italic">Namaste, I'm {settings.appName}</h2>
-            <p className="text-[#e0d8d0]/60 text-lg">Your multilingual AI voice companion</p>
+          <div className="space-y-2">
+            <h2 className="text-3xl sm:text-4xl font-serif italic">Namaste, I'm {settings.appName}</h2>
+            <p className="text-[#e0d8d0]/40 text-sm sm:text-base">Your multilingual AI voice companion</p>
           </div>
 
-          {/* Language Selector */}
-          <div className="flex flex-wrap justify-center gap-3 max-w-2xl">
-            {settings.languages.map(lang => (
-              <button
-                key={lang.code}
-                onClick={() => setSelectedLang(lang)}
-                className={`px-4 py-2 rounded-full text-sm font-medium border transition-all duration-300 ${
-                  selectedLang.code === lang.code 
-                  ? 'text-white shadow-lg' 
-                  : 'bg-white/5 border-white/10 hover:border-white/30 text-white/60'
-                }`}
-                style={selectedLang.code === lang.code ? { backgroundColor: settings.primaryColor, borderColor: settings.primaryColor, boxShadow: `0 10px 20px ${settings.primaryColor}30` } : {}}
-              >
-                {lang.name}
-              </button>
-            ))}
+          {/* Voice Wave Animation */}
+          <div className="h-24 flex items-center justify-center">
+            <VoiceWave active={isRecording && status === 'Connected'} />
           </div>
 
           {/* Mic Button */}
@@ -369,50 +409,159 @@ function App() {
               {isRecording && (
                 <motion.div
                   initial={{ scale: 0.8, opacity: 0 }}
-                  animate={{ scale: 1.6, opacity: 0.4 }}
+                  animate={{ scale: [1, 1.8, 1], opacity: [0.2, 0.4, 0.2] }}
                   exit={{ scale: 0.8, opacity: 0 }}
-                  transition={{ duration: 2, repeat: Infinity }}
+                  transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
                   className="absolute inset-0 rounded-full blur-3xl"
                   style={{ backgroundColor: settings.primaryColor }}
                 />
               )}
             </AnimatePresence>
             
-            <button
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={isRecording ? stopAgent : startAgent}
-              className={`relative z-10 w-40 h-40 rounded-full flex items-center justify-center transition-all duration-500 shadow-2xl ${
+              className={`relative z-10 w-48 h-48 rounded-full flex items-center justify-center transition-all duration-500 shadow-2xl ${
                 isRecording ? 'scale-110' : 'bg-white/5 hover:bg-white/10 border border-white/10'
               }`}
-              style={isRecording ? { backgroundColor: settings.primaryColor, boxShadow: `0 0 50px ${settings.primaryColor}60` } : {}}
+              style={isRecording ? { backgroundColor: settings.primaryColor, boxShadow: `0 0 60px ${settings.primaryColor}80` } : {}}
             >
-              {isRecording ? <Mic className="w-16 h-16 text-white animate-pulse" /> : <MicOff className="w-16 h-16 text-white/40" />}
-            </button>
+              {isRecording ? (
+                <div className="relative">
+                  <MicOff className="w-16 h-16 text-white" />
+                  <motion.div 
+                    animate={{ scale: [1, 1.2, 1] }}
+                    transition={{ duration: 1, repeat: Infinity }}
+                    className="absolute -inset-2 border-2 border-white/30 rounded-full"
+                  />
+                </div>
+              ) : (
+                <Mic className="w-16 h-16 text-white/40 group-hover:text-white/60 transition-colors" />
+              )}
+            </motion.button>
           </div>
 
-          <div className="space-y-4">
+          <div className="space-y-6 w-full max-w-2xl">
             <div className="flex items-center justify-center gap-3">
               <div 
-                className={`w-3 h-3 rounded-full ${isRecording ? 'animate-ping' : 'opacity-20'}`} 
+                className={`w-3 h-3 rounded-full ${isRecording ? 'animate-pulse' : 'opacity-20'}`} 
                 style={{ backgroundColor: isRecording ? '#22c55e' : '#fff' }}
               />
               <span className="text-sm font-mono uppercase tracking-[0.2em] opacity-40">{status}</span>
             </div>
-            <AnimatePresence>
-              {lastMessage && (
+            
+            <AnimatePresence mode="wait">
+              {lastMessage ? (
                 <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="p-6 bg-white/5 backdrop-blur-xl rounded-3xl border border-white/10 max-w-xl"
+                  key="message"
+                  initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, scale: 1.05 }}
+                  className="p-10 bg-white/5 backdrop-blur-2xl rounded-[40px] border border-white/10 shadow-2xl relative overflow-hidden"
                 >
-                  <p className="text-xl font-serif italic text-white/90 leading-relaxed">
+                  <div className="absolute top-0 left-0 w-1 h-full" style={{ backgroundColor: settings.primaryColor }} />
+                  <p className="text-2xl font-serif italic text-white/90 leading-relaxed">
                     "{lastMessage}"
                   </p>
+                </motion.div>
+              ) : isRecording && (
+                <motion.div
+                  key="listening"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="text-white/30 font-serif italic text-lg"
+                >
+                  I'm listening... speak naturally
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
         </div>
       </main>
+
+      {/* Bottom Navigation */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 p-4 sm:p-6 flex justify-center pointer-events-none">
+        <div className="bg-[#151619]/80 backdrop-blur-2xl border border-white/10 rounded-full px-6 py-3 flex items-center gap-8 shadow-2xl pointer-events-auto">
+          <button className="p-2 text-[#ff4e00] transition-transform active:scale-90">
+            <Home className="w-6 h-6" />
+          </button>
+          <button 
+            onClick={() => setShowHistory(true)}
+            className="p-2 text-white/40 hover:text-white transition-all active:scale-90"
+          >
+            <History className="w-6 h-6" />
+          </button>
+          <div className="w-[1px] h-6 bg-white/10" />
+          <button 
+            onClick={() => setShowVoiceSettings(true)}
+            className="p-2 text-white/40 hover:text-white transition-all active:scale-90"
+          >
+            <Settings className="w-6 h-6" />
+          </button>
+          {user && (
+            <button className="p-2 text-white/40 hover:text-white transition-all active:scale-90">
+              <UserIcon className="w-6 h-6" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* History Panel */}
+      <AnimatePresence>
+        {showHistory && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm p-4"
+            onClick={() => setShowHistory(false)}
+          >
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="bg-[#151619] w-full max-w-2xl rounded-t-[40px] border-t border-x border-white/10 flex flex-col max-h-[80vh]"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="p-8 border-b border-white/5 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-white/5 rounded-2xl">
+                    <History className="w-6 h-6 text-[#ff4e00]" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-serif italic">Chat History</h2>
+                    <p className="text-xs font-mono opacity-40 uppercase tracking-widest">Recent Voice Interactions</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowHistory(false)} className="p-2 hover:bg-white/5 rounded-full">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar">
+                {history.length === 0 ? (
+                  <div className="text-center py-20 opacity-20">
+                    <MessageSquare className="w-12 h-12 mx-auto mb-4" />
+                    <p className="font-serif italic">No history yet...</p>
+                  </div>
+                ) : (
+                  history.map((item, i) => (
+                    <div key={i} className={`flex flex-col ${item.role === 'user' ? 'items-end' : 'items-start'}`}>
+                      <div className={`max-w-[80%] p-4 rounded-2xl text-sm ${item.role === 'user' ? 'bg-[#ff4e00] text-white rounded-tr-none' : 'bg-white/5 border border-white/10 text-white/80 rounded-tl-none'}`}>
+                        {item.text}
+                      </div>
+                      <span className="text-[10px] font-mono opacity-20 mt-1 uppercase">
+                        {item.role} • {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Voice Settings Modal */}
       <AnimatePresence>
@@ -446,9 +595,41 @@ function App() {
   );
 }
 
+function VoiceWave({ active }: { active: boolean }) {
+  return (
+    <div className="flex items-center gap-1 h-12">
+      {[...Array(12)].map((_, i) => (
+        <motion.div
+          key={i}
+          animate={active ? {
+            height: [8, Math.random() * 40 + 10, 8],
+            opacity: [0.3, 1, 0.3]
+          } : {
+            height: 4,
+            opacity: 0.1
+          }}
+          transition={{
+            duration: 0.5 + Math.random() * 0.5,
+            repeat: Infinity,
+            ease: "easeInOut",
+            delay: i * 0.05
+          }}
+          className="w-1.5 bg-[#ff4e00] rounded-full"
+        />
+      ))}
+    </div>
+  );
+}
+
 function VoiceSettingsModal({ onClose, settings, setSettings }: { onClose: () => void, settings: any, setSettings: (s: any) => void }) {
+  const [genderFilter, setGenderFilter] = useState<'All' | 'Male' | 'Female'>('All');
   const voices = [
-    { id: 'Kore', label: 'Kore', gender: 'Female', best: true },
+    { id: 'Vani', label: 'Vani (Premium)', gender: 'Female', best: true, description: 'Sarvam AI style - Warm & Natural' },
+    { id: 'Asha', label: 'Asha', gender: 'Female', description: 'Clear & Professional' },
+    { id: 'Ananya', label: 'Ananya', gender: 'Female', description: 'Soft & Empathetic' },
+    { id: 'Arjun', label: 'Arjun', gender: 'Male', description: 'Deep & Authoritative' },
+    { id: 'Rohan', label: 'Rohan', gender: 'Male', description: 'Young & Energetic' },
+    { id: 'Kore', label: 'Kore', gender: 'Female' },
     { id: 'Zephyr', label: 'Zephyr', gender: 'Female' },
     { id: 'Puck', label: 'Puck', gender: 'Male' },
     { id: 'Charon', label: 'Charon', gender: 'Male' },
@@ -458,6 +639,8 @@ function VoiceSettingsModal({ onClose, settings, setSettings }: { onClose: () =>
   const speeds = ['Slow', 'Normal', 'Fast'];
   const pitches = ['Low', 'Normal', 'High'];
   const emotionalStyles = ['Empathetic', 'Energetic', 'Professional', 'Casual', 'Friendly'];
+
+  const filteredVoices = voices.filter(v => genderFilter === 'All' || v.gender === genderFilter);
 
   return (
     <motion.div 
@@ -487,29 +670,58 @@ function VoiceSettingsModal({ onClose, settings, setSettings }: { onClose: () =>
         </div>
 
         <div className="p-8 space-y-8 overflow-y-auto custom-scrollbar max-h-[60vh]">
+          {/* Gender Filter */}
+          <div className="space-y-4">
+            <label className="text-xs font-mono opacity-40 uppercase flex items-center gap-2">
+              <UserIcon className="w-4 h-4" />
+              Voice Gender
+            </label>
+            <div className="flex p-1 bg-white/5 rounded-2xl border border-white/10">
+              {['All', 'Male', 'Female'].map((g) => (
+                <button
+                  key={g}
+                  onClick={() => setGenderFilter(g as any)}
+                  className={`flex-1 py-2 rounded-xl text-xs font-medium transition-all ${
+                    genderFilter === g 
+                    ? 'bg-white/10 text-white shadow-lg' 
+                    : 'text-white/40 hover:text-white/60'
+                  }`}
+                >
+                  {g}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Voice Selection */}
           <div className="space-y-4">
             <label className="text-xs font-mono opacity-40 uppercase flex items-center gap-2">
               <MessageSquare className="w-4 h-4" />
-              AI Voice Profile (Male / Female)
+              AI Voice Profile
             </label>
             <div className="grid grid-cols-1 gap-3">
               {/* Best Recommendation */}
               <div className="space-y-2">
                 <span className="text-[10px] font-mono opacity-30 uppercase tracking-tighter">Recommended</span>
-                {voices.filter(v => v.best).map(v => (
+                {filteredVoices.filter(v => v.best).map(v => (
                   <button
                     key={v.id}
-                    onClick={() => setSettings({ ...settings, voiceName: v.id })}
+                    onClick={() => setSettings({ ...settings, voiceName: v.id, gender: v.gender })}
                     className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-sm font-medium border transition-all ${
                       settings.voiceName === v.id 
                       ? 'bg-[#ff4e00]/10 border-[#ff4e00]/30 text-white' 
                       : 'bg-white/5 border-white/10 text-white/40 hover:border-white/20'
                     }`}
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 text-left">
                       <div className={`w-2 h-2 rounded-full ${settings.voiceName === v.id ? 'bg-[#ff4e00]' : 'bg-white/20'}`} />
-                      <span>{v.label} <span className="text-[10px] opacity-50 ml-1">({v.gender})</span></span>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span>{v.label}</span>
+                          <span className="text-[10px] opacity-50">({v.gender})</span>
+                        </div>
+                        {v.description && <p className="text-[10px] opacity-30 font-normal">{v.description}</p>}
+                      </div>
                     </div>
                     <span className="text-[10px] bg-[#ff4e00] text-white px-2 py-0.5 rounded-full font-bold">BEST</span>
                   </button>
@@ -520,10 +732,10 @@ function VoiceSettingsModal({ onClose, settings, setSettings }: { onClose: () =>
               <div className="space-y-2 pt-2">
                 <span className="text-[10px] font-mono opacity-30 uppercase tracking-tighter">Other Profiles</span>
                 <div className="grid grid-cols-2 gap-2">
-                  {voices.filter(v => !v.best).map(v => (
+                  {filteredVoices.filter(v => !v.best).map(v => (
                     <button
                       key={v.id}
-                      onClick={() => setSettings({ ...settings, voiceName: v.id })}
+                      onClick={() => setSettings({ ...settings, voiceName: v.id, gender: v.gender })}
                       className={`flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-medium border transition-all ${
                         settings.voiceName === v.id 
                         ? 'bg-white/10 border-white/30 text-white' 
@@ -531,7 +743,12 @@ function VoiceSettingsModal({ onClose, settings, setSettings }: { onClose: () =>
                       }`}
                     >
                       <div className={`w-1.5 h-1.5 rounded-full ${settings.voiceName === v.id ? 'bg-white' : 'bg-white/20'}`} />
-                      <span>{v.label} <span className="text-[10px] opacity-50 ml-1">({v.gender})</span></span>
+                      <div className="text-left">
+                        <div className="flex items-center gap-1">
+                          <span>{v.label}</span>
+                        </div>
+                        <span className="text-[9px] opacity-30 block">({v.gender})</span>
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -640,7 +857,7 @@ function VoiceSettingsModal({ onClose, settings, setSettings }: { onClose: () =>
 }
 
 function AdminPanel({ onClose, settings, knowledge }: { onClose: () => void, settings: any, knowledge: any[] }) {
-  const [activeTab, setActiveTab] = useState<'settings' | 'knowledge'>('settings');
+  const [activeTab, setActiveTab] = useState<'settings' | 'knowledge' | 'ai'>('settings');
   const [localSettings, setLocalSettings] = useState(settings);
   const [newDoc, setNewDoc] = useState({ title: '', content: '' });
 
@@ -720,6 +937,13 @@ function AdminPanel({ onClose, settings, knowledge }: { onClose: () => void, set
             >
               <Book className="w-5 h-5" />
               <span className="font-medium">Knowledge Base</span>
+            </button>
+            <button 
+              onClick={() => setActiveTab('ai')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all ${activeTab === 'ai' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/5'}`}
+            >
+              <Shield className="w-5 h-5" />
+              <span className="font-medium">AI Configuration</span>
             </button>
           </div>
 
@@ -806,6 +1030,77 @@ function AdminPanel({ onClose, settings, knowledge }: { onClose: () => void, set
                 >
                   <Save className="w-5 h-5" />
                   Save Global Configuration
+                </button>
+              </div>
+            ) : activeTab === 'ai' ? (
+              <div className="space-y-10 max-w-2xl">
+                <section className="space-y-6">
+                  <h3 className="text-lg font-medium flex items-center gap-2 text-white/90">
+                    <Shield className="w-5 h-5 text-[#ff4e00]" />
+                    AI Backend Configuration
+                  </h3>
+                  <p className="text-sm text-white/40">Switch between different AI providers. Note: Only Gemini currently supports native low-latency audio. Other providers will use a standard LLM pipeline.</p>
+                  
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-xs font-mono opacity-40 uppercase">AI Provider</label>
+                      <select 
+                        value={localSettings.aiProvider}
+                        onChange={e => setLocalSettings({...localSettings, aiProvider: e.target.value})}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 focus:border-[#ff4e00]/50 outline-none text-white appearance-none"
+                      >
+                        <option value="gemini">Google Gemini (Live Audio)</option>
+                        <option value="ollama">Ollama (Local LLM)</option>
+                        <option value="grok">Grok (xAI)</option>
+                        <option value="openai">OpenAI</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-mono opacity-40 uppercase">Model Name</label>
+                      <input 
+                        type="text" 
+                        placeholder={localSettings.aiProvider === 'gemini' ? 'gemini-2.5-flash-native-audio-preview-12-2025' : 'e.g. llama3, grok-1'}
+                        value={localSettings.modelName}
+                        onChange={e => setLocalSettings({...localSettings, modelName: e.target.value})}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 focus:border-[#ff4e00]/50 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {localSettings.aiProvider === 'ollama' && (
+                    <div className="space-y-2">
+                      <label className="text-xs font-mono opacity-40 uppercase">Ollama API URL</label>
+                      <input 
+                        type="text" 
+                        placeholder="http://localhost:11434"
+                        value={localSettings.apiUrl}
+                        onChange={e => setLocalSettings({...localSettings, apiUrl: e.target.value})}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 focus:border-[#ff4e00]/50 outline-none"
+                      />
+                    </div>
+                  )}
+
+                  {localSettings.aiProvider !== 'ollama' && (
+                    <div className="space-y-2">
+                      <label className="text-xs font-mono opacity-40 uppercase">API Key (Optional if using environment key)</label>
+                      <input 
+                        type="password" 
+                        placeholder="••••••••••••••••"
+                        value={localSettings.apiKey}
+                        onChange={e => setLocalSettings({...localSettings, apiKey: e.target.value})}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 focus:border-[#ff4e00]/50 outline-none"
+                      />
+                      <p className="text-[10px] text-white/30 italic">If left blank, the system will use the default server-side key.</p>
+                    </div>
+                  )}
+                </section>
+
+                <button 
+                  onClick={saveSettings}
+                  className="w-full py-4 bg-[#ff4e00] text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-[#ff4e00]/90 transition-all shadow-xl shadow-[#ff4e00]/20"
+                >
+                  <Save className="w-5 h-5" />
+                  Save AI Configuration
                 </button>
               </div>
             ) : (
