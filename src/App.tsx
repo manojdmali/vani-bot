@@ -230,6 +230,18 @@ function App() {
 
   const handleLogout = () => auth.signOut();
 
+  // Auto-restart agent when voice settings change
+  useEffect(() => {
+    if (isRecording) {
+      const timer = setTimeout(() => {
+        stopAgent();
+        startAgent();
+        toast.info('Applying new voice settings...');
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [voiceSettings.voiceName, voiceSettings.accent, voiceSettings.emotionalStyle]);
+
   const startAgent = async () => {
     try {
       const kbContent = await getKnowledgeBase();
@@ -271,17 +283,29 @@ function App() {
       const voiceMapping: Record<string, string> = {
         'Vani': 'Kore',
         'Asha': 'Zephyr',
-        'Ananya': 'Kore',
         'Arjun': 'Puck',
         'Rohan': 'Charon',
+        'Deepak': 'Fenrir',
       };
 
-      const actualVoiceName = voiceMapping[voiceSettings.voiceName] || voiceSettings.voiceName;
+      const actualVoiceName = voiceMapping[voiceSettings.voiceName] || 'Kore';
       
-      // Enhance system instruction with voice personality
-      const voicePersonality = `You are Vani, an Indian AI assistant. Your voice profile is ${voiceSettings.voiceName} (${voiceSettings.gender}). 
-      Speak with a ${voiceSettings.accent} accent. Your emotional style is ${voiceSettings.emotionalStyle}. 
-      Keep your responses concise and natural for a voice conversation.`;
+      // Enhance system instruction with voice personality and Sarvam AI style cues
+      const voicePersonality = `
+        VOICE PERSONA:
+        - You are currently speaking as "${voiceSettings.voiceName}" (${voiceSettings.gender}).
+        - Your style is ${voiceSettings.emotionalStyle}.
+        - Your accent is ${voiceSettings.accent}.
+        
+        CRITICAL VOICE INSTRUCTIONS:
+        1. Mimic the natural cadence, warmth, and rhythm of a native Indian human speaker.
+        2. If you are "Vani", sound like the Sarvam AI Vani voice: warm, helpful, and very natural.
+        3. If you are "Arjun", use a deeper, more mature Indian male tone.
+        4. Use appropriate Indian fillers like "achha", "theek hai", or "ji" sparingly to sound more human.
+        5. Adjust your tone to be ${voiceSettings.emotionalStyle.toLowerCase()}.
+        6. Keep responses brief to maintain a fluid voice conversation.
+        7. IMPORTANT: Speak with a clear Indian English accent (or Hindi if spoken to in Hindi).
+      `;
       
       const fullInstruction = `${systemInstruction}\n\n${voicePersonality}`;
 
@@ -626,21 +650,16 @@ function VoiceSettingsModal({ onClose, settings, setSettings }: { onClose: () =>
   const voices = [
     { id: 'Vani', label: 'Vani (Premium)', gender: 'Female', best: true, description: 'Sarvam AI style - Warm & Natural' },
     { id: 'Asha', label: 'Asha', gender: 'Female', description: 'Clear & Professional' },
-    { id: 'Ananya', label: 'Ananya', gender: 'Female', description: 'Soft & Empathetic' },
     { id: 'Arjun', label: 'Arjun', gender: 'Male', description: 'Deep & Authoritative' },
     { id: 'Rohan', label: 'Rohan', gender: 'Male', description: 'Young & Energetic' },
-    { id: 'Kore', label: 'Kore', gender: 'Female' },
-    { id: 'Zephyr', label: 'Zephyr', gender: 'Female' },
-    { id: 'Puck', label: 'Puck', gender: 'Male' },
-    { id: 'Charon', label: 'Charon', gender: 'Male' },
-    { id: 'Fenrir', label: 'Fenrir', gender: 'Male' },
+    { id: 'Deepak', label: 'Deepak', gender: 'Male', description: 'Mature & Calm' },
   ];
-  const accents = ['Neutral Indian', 'North Indian', 'South Indian', 'Bengali', 'Marathi', 'Punjabi'];
-  const speeds = ['Slow', 'Normal', 'Fast'];
-  const pitches = ['Low', 'Normal', 'High'];
   const emotionalStyles = ['Empathetic', 'Energetic', 'Professional', 'Casual', 'Friendly'];
 
   const filteredVoices = voices.filter(v => genderFilter === 'All' || v.gender === genderFilter);
+  const accents = ['Neutral Indian', 'North Indian', 'South Indian', 'Bengali', 'Marathi', 'Punjabi'];
+  const speeds = ['Slow', 'Normal', 'Fast'];
+  const pitches = ['Low', 'Normal', 'High'];
 
   return (
     <motion.div 
@@ -669,7 +688,7 @@ function VoiceSettingsModal({ onClose, settings, setSettings }: { onClose: () =>
           </button>
         </div>
 
-        <div className="p-8 space-y-8 overflow-y-auto custom-scrollbar max-h-[60vh]">
+        <div className="p-8 space-y-8 overflow-y-auto custom-scrollbar max-h-[70vh]">
           {/* Gender Filter */}
           <div className="space-y-4">
             <label className="text-xs font-mono opacity-40 uppercase flex items-center gap-2">
